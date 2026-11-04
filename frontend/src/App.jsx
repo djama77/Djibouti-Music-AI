@@ -95,6 +95,7 @@ export default function App() {
         <button disabled={busy || prompt.trim().length < 3 || !token.trim()}>{busy ? "Patiente…" : "Lancer la création  →"}</button>
         {message && <p className="message" role="status">{message}</p>}
         {task?.id && <div className="task"><div><b>Projet : {task.id}</b><small>Statut ACE-Step : {task.status === 1 ? "terminé" : task.status === 2 ? "échec" : "en attente / en cours"}</small></div><button type="button" className="secondary" onClick={checkStatus} disabled={busy}>Vérifier le statut</button></div>}
+        {task?.result && <pre className="result">{String(task.result)}</pre>}
       </form>
       <footer>Propulsé par ACE-Step 1.5 · Le service GPU doit être configuré séparément.</footer>
     </main>
