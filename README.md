@@ -1,29 +1,42 @@
 # Djibouti Music AI
 
-Open-source AI music studio powered by ACE-Step 1.5. This repository is the project starter: a responsive React interface, FastAPI adapter, Docker Compose setup, and backend tests.
+Studio web responsive de création musicale assistée par **ACE-Step 1.5**.
 
 ## Architecture
 
-- `frontend/`: React + Vite interface, designed for mobile and desktop.
-- `backend/`: FastAPI service that forwards generation requests to a separately hosted ACE-Step API.
-- GPU inference must run on a GPU-capable host; Vercel is suitable for the frontend, not for hosting the model itself.
+- `frontend/` : React + Vite, interface adaptée aux téléphones et ordinateurs.
+- `backend/` : API FastAPI qui protège la clé du service ACE-Step et relaie les tâches de génération.
+- Le moteur ACE-Step et ses modèles doivent fonctionner sur un serveur disposant des ressources GPU nécessaires.
+- Vercel peut héberger le frontend ; il ne remplace pas le serveur GPU.
 
-## Status
+## Démarrage local
 
-Starter implementation. The ACE-Step service URL and access key must be configured locally. The integration has not yet been validated against a live GPU instance.
+1. Copier `.env.example` vers `.env`.
+2. Renseigner `APP_ACCESS_TOKEN`, `ACESTEP_BASE_URL` et, si nécessaire, `ACESTEP_API_KEY`.
+3. Lancer l'API : `docker compose up --build`.
+4. Dans un autre terminal : `cd frontend && npm install && npm run dev`.
+5. Ouvrir l'adresse locale Vite et saisir le jeton d'accès fourni par l'administrateur.
 
-## Local setup
+Le backend refuse les demandes de génération tant que le jeton d'application et l'URL ACE-Step ne sont pas configurés. Le jeton d'accès n'est pas inclus dans le code frontend ni dans le dépôt.
 
-1. Copy `.env.example` to `.env` and configure the ACE-Step API URL and application access key.
-2. Run `docker compose up --build`.
-3. Open the frontend at `http://localhost:5173`.
+## Tests backend
 
-Do not expose a shared demo access key in a public production frontend. Add real user authentication, per-user quotas, abuse controls, and a privacy notice before opening the service publicly.
+```bash
+cd backend
+pip install -r requirements-dev.txt
+pytest
+```
 
-## Tests
+## Déploiement
 
-Run backend tests with `cd backend && pip install -r requirements-dev.txt && pytest`.
+Pour Vercel, définir le répertoire racine du projet sur `frontend` et la commande de build sur `npm run build`. Configurer `VITE_API_BASE_URL` avec l'URL HTTPS du backend. Sur le backend, définir `CORS_ORIGINS` avec le domaine exact du frontend.
 
-## License
+Cette version est un socle bêta, pas encore un service public prêt à accueillir tous les utilisateurs. Avant ouverture publique, ajouter une vraie authentification par utilisateur, quotas, limitation de débit, suivi des coûts, supervision, politique de confidentialité et protection contre les abus. Ne jamais placer `ACESTEP_API_KEY` dans une variable `VITE_*` ni dans le navigateur.
 
-See the repository license file before redistributing. ACE-Step has its own license and usage terms; review them separately.
+## API ACE-Step
+
+Le backend utilise le flux asynchrone documenté par ACE-Step : `POST /release_task`, puis `POST /query_result`. Voir la [documentation API ACE-Step 1.5](https://github.com/ace-step/ACE-Step-1.5/blob/main/docs/en/API.md).
+
+## Licence
+
+Voir `LICENSE`. Vérifier séparément la licence et les conditions d'utilisation d'ACE-Step 1.5 et des modèles téléchargés.
