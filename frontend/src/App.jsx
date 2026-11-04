@@ -26,7 +26,7 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "La demande n'a pas abouti.");
-      setTask({ id: data.task_id, status: "queued" });
+      setTask({ id: data.task_id, status: 0, result: [], audio_url: null });
       setMessage("Demande envoyée. La génération peut prendre plusieurs minutes.");
     } catch (error) {
       setMessage(error.message);
@@ -45,13 +45,15 @@ export default function App() {
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Impossible de lire le statut.");
       setTask(data);
-      setMessage(data.status === 1 ? "Création terminée. Consulte le résultat renvoyé par ACE-Step." : data.status === 2 ? "La génération a échoué. Réessaie avec une description plus simple." : "Création en cours…");
+      setMessage(data.status === 1 ? (data.audio_url ? "Ta création est prête. Tu peux l’écouter ou la télécharger." : "Génération terminée, mais aucun fichier audio n’a été fourni.") : data.status === 2 ? "La génération a échoué. Réessaie avec une description différente." : "Création en cours…");
     } catch (error) {
       setMessage(error.message);
     } finally {
       setBusy(false);
     }
   }
+
+  const audioSrc = task?.audio_url ? `${API}${task.audio_url}` : "";
 
   return (
     <main className="shell">
@@ -94,8 +96,20 @@ export default function App() {
         </div>
         <button disabled={busy || prompt.trim().length < 3 || !token.trim()}>{busy ? "Patiente…" : "Lancer la création  →"}</button>
         {message && <p className="message" role="status">{message}</p>}
-        {task?.id && <div className="task"><div><b>Projet : {task.id}</b><small>Statut ACE-Step : {task.status === 1 ? "terminé" : task.status === 2 ? "échec" : "en attente / en cours"}</small></div><button type="button" className="secondary" onClick={checkStatus} disabled={busy}>Vérifier le statut</button></div>}
-        {task?.result && <pre className="result">{String(task.result)}</pre>}
+        {task?.id && <div className="task">
+          <div><b>Projet : {task.id}</b><small>Statut : {task.status === 1 ? "terminé" : task.status === 2 ? "échec" : "en attente / en cours"}</small></div>
+          <button type="button" className="secondary" onClick={checkStatus} disabled={busy}>Vérifier le statut</button>
+        </div>}
+        {task?.audio_url && <section className="audio-result" aria-label="Résultat audio">
+          <h3>Ta création musicale</h3>
+          <audio controls preload="none" src={audioSrc}>Ton navigateur ne prend pas en charge la lecture audio.</audio>
+          <a className="download" href={audioSrc} download>↓ Télécharger le fichier audio</a>
+          <small>Le téléchargement passe par le backend sécurisé de l’application.</small>
+        </section>}
+        {task?.result?.length > 0 && <details className="metadata">
+          <summary>Détails de la génération</summary>
+          <pre>{JSON.stringify(task.result[0].metas || {}, null, 2)}</pre>
+        </details>}
       </form>
       <footer>Propulsé par ACE-Step 1.5 · Le service GPU doit être configuré séparément.</footer>
     </main>
