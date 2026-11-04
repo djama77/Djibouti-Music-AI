@@ -19,6 +19,10 @@ Studio web responsive de création musicale assistée par **ACE-Step 1.5**.
 
 Le backend refuse les demandes de génération tant que le jeton d'application et l'URL ACE-Step ne sont pas configurés. Le jeton d'accès n'est pas inclus dans le code frontend ni dans le dépôt.
 
+## Résultat audio
+
+Après la génération, actualiser le statut du projet. Lorsque ACE-Step indique que le travail est terminé et fournit un fichier, l'interface affiche un lecteur audio HTML5 et un lien de téléchargement. Le backend valide la référence audio renvoyée par ACE-Step et relaie le fichier via une route protégée par le jeton d'application. Taille maximale du fichier relayé : 100 MB.
+
 ## Tests backend
 
 ```bash
