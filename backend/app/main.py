@@ -1,13 +1,11 @@
 import os
 import secrets
 from typing import Literal
-from urllib.parse import urlsplit
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
-from pydantic import BaseModel, Field, HttpUrl
+from pydantic import BaseModel, Field
 
 APP_NAME = "Djibouti Music AI"
 app = FastAPI(title=APP_NAME, version="0.1.0")
