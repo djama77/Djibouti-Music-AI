@@ -16,12 +16,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: npm install
-      - name: Report dependency advisories
-        run: |
-          npm audit --json > audit-report.json || true
-          node -e 'const a=require("./audit-report.json"); for (const [name,v] of Object.entries(a.vulnerabilities || {})) console.log(`${name}: ${v.severity}; fixAvailable=${JSON.stringify(v.fixAvailable)}`); console.log(`Totals: ${JSON.stringify(a.metadata?.vulnerabilities || {})}`)'
+      - name: Check dependency security
+        run: npm audit --audit-level=moderate
       - run: npm run build
 
   backend:
