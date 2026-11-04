@@ -18,6 +18,10 @@ jobs:
         with:
           node-version: 20
       - run: npm install
+      - name: Report dependency advisories
+        run: |
+          npm audit --json > audit-report.json || true
+          node -e 'const a=require("./audit-report.json"); for (const [name,v] of Object.entries(a.vulnerabilities || {})) console.log(`${name}: ${v.severity}; fixAvailable=${JSON.stringify(v.fixAvailable)}`); console.log(`Totals: ${JSON.stringify(a.metadata?.vulnerabilities || {})}`)'
       - run: npm run build
 
   backend:
