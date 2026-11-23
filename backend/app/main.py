@@ -1,75 +1,209 @@
-from __future__ import annotations
-import json, os
-from typing import Any
-from urllib.parse import urljoin
+import json
+import os
+import secrets
+from pathlib import PurePosixPath
+from typing import Literal
+from urllib.parse import parse_qs, urlsplit
+
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field, field_validator
+from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
-app = FastAPI(title="Djibouti Music AI API", version="0.1.0")
-origins = [x.strip() for x in os.getenv("CORS_ORIGINS", "http://localhost:5173").split(",") if x.strip()]
-app.add_middleware(CORSMiddleware, allow_origins=origins, allow_credentials=False, allow_methods=["GET","POST"], allow_headers=["Content-Type","X-App-Access-Key"])
+APP_NAME = "Djibouti Music AI"
+MAX_AUDIO_BYTES = 100 * 1024 * 1024
+app = FastAPI(title=APP_NAME, version="0.2.0")
 
-def require_demo_key(x_app_access_key: str | None = Header(default=None)) -> None:
-    expected = os.getenv("APP_ACCESS_KEY", "")
-    if not expected: raise HTTPException(status_code=503, detail="APP_ACCESS_KEY is not configured.")
-    if not x_app_access_key or x_app_access_key != expected: raise HTTPException(status_code=401, detail="Invalid or missing access key.")
+origins = [item.strip() for item in os.getenv(
+    "CORS_ORIGINS", "http://localhost:5173,http://127.0.0.1:5173"
+).split(",") if item.strip()]
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-App-Token"],
+)
+
 
 class GenerateRequest(BaseModel):
-    prompt: str = Field(min_length=3, max_length=512)
-    lyrics: str = Field(default="", max_length=4096)
-    language: str = Field(default="fr", pattern=r"^(so|aa|fr|ar|en)$")
-    genre: str = Field(default="Afrobeat", max_length=80)
-    duration: int = Field(default=60, ge=10, le=300)
-    audio_format: str = Field(default="mp3", pattern=r"^(mp3|wav)$")
-    instrumental: bool = False
-    @field_validator("prompt","lyrics","genre")
-    @classmethod
-    def trim_text(cls, value: str) -> str: return value.strip()
+    prompt: str = Field(min_length=3, max_length=2000)
+    lyrics: str = Field(default="", max_length=4000)
+    duration: int = Field(default=30, ge=10, le=180)
+    audio_format: Literal["mp3", "wav", "flac"] = "mp3"
+    vocal_language: str = Field(default="en", min_length=2, max_length=16)
+    thinking: bool = False
 
-class GenerateResponse(BaseModel):
-    task_id: str
-    status: str
-    message: str
 
-def _unwrap(payload: dict[str, Any]) -> Any:
-    if payload.get("error"): raise HTTPException(status_code=502, detail=str(payload["error"]))
-    if payload.get("code", 200) not in (200,0): raise HTTPException(status_code=502, detail="ACE-Step returned an unsuccessful response.")
-    return payload.get("data", payload)
+def require_app_token(x_app_token: str | None = Header(default=None)) -> None:
+    expected = os.getenv("APP_ACCESS_TOKEN", "")
+    if not expected:
+        raise HTTPException(status_code=503, detail="Generation is disabled: APP_ACCESS_TOKEN is not configured.")
+    if not x_app_token or not secrets.compare_digest(x_app_token, expected):
+        raise HTTPException(status_code=401, detail="Invalid or missing application token.")
 
-def _ace_headers() -> dict[str,str]:
-    key=os.getenv("ACE_STEP_API_KEY","").strip()
-    return {"Authorization":f"Bearer {key}"} if key else {}
 
-def _ace_url(path: str) -> str:
-    return urljoin(os.getenv("ACESTEP_API_URL","http://localhost:8001").rstrip("/")+"/", path.lstrip("/"))
+def upstream_config() -> tuple[str, dict[str, str]]:
+    base_url = os.getenv("ACESTEP_BASE_URL", "").rstrip("/")
+    if not base_url:
+        raise HTTPException(status_code=503, detail="ACE-Step GPU service is not configured.")
+    headers = {}
+    api_key = os.getenv("ACESTEP_API_KEY", "")
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
+    return base_url, headers
 
-@app.get("/health")
-async def health(): return {"status":"ok","service":"djibouti-music-ai-api"}
 
-@app.post("/api/generate", response_model=GenerateResponse, dependencies=[Depends(require_demo_key)])
-async def generate(body: GenerateRequest):
-    payload={"prompt":f"{body.genre}, {body.prompt}","lyrics":"[Instrumental]" if body.instrumental else body.lyrics,"vocal_language":body.language,"audio_duration":body.duration,"audio_format":body.audio_format,"task_type":"text2music","thinking":True,"use_cot_caption":True,"use_cot_language":True,"batch_size":1}
+async def ace_request(method: str, path: str, **kwargs):
+    base_url, headers = upstream_config()
+    headers.update(kwargs.pop("headers", {}))
     try:
-        async with httpx.AsyncClient(timeout=float(os.getenv("REQUEST_TIMEOUT_SECONDS","30"))) as client:
-            response=await client.post(_ace_url("/release_task"),json=payload,headers=_ace_headers()); response.raise_for_status(); data=_unwrap(response.json())
-    except httpx.HTTPError as exc: raise HTTPException(status_code=502,detail=f"ACE-Step service unavailable: {exc.__class__.__name__}") from exc
-    task_id=data.get("task_id") if isinstance(data,dict) else None
-    if not task_id: raise HTTPException(status_code=502,detail="ACE-Step response did not contain a task_id.")
-    return GenerateResponse(task_id=str(task_id),status=str(data.get("status","queued")),message="Generation queued.")
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=90.0)) as client:
+            response = await client.request(method, f"{base_url}{path}", headers=headers, **kwargs)
+            response.raise_for_status()
+            payload = response.json()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="ACE-Step service timed out.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"ACE-Step service returned HTTP {exc.response.status_code}.") from exc
+    except (httpx.HTTPError, ValueError) as exc:
+        raise HTTPException(status_code=502, detail="Unable to communicate with ACE-Step service.") from exc
+    if isinstance(payload, dict) and payload.get("error"):
+        raise HTTPException(status_code=502, detail="ACE-Step rejected the request.")
+    return payload
 
-@app.get("/api/jobs/{task_id}", dependencies=[Depends(require_demo_key)])
-async def job_status(task_id: str):
+
+def validate_task_id(task_id: str) -> None:
+    if not task_id or len(task_id) > 128 or any(
+        ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_" for ch in task_id
+    ):
+        raise HTTPException(status_code=400, detail="Invalid task identifier.")
+
+
+def task_result_data(result):
+    if isinstance(result, str):
+        try:
+            result = json.loads(result)
+        except json.JSONDecodeError:
+            return []
+    if isinstance(result, dict):
+        result = [result]
+    if not isinstance(result, list):
+        return []
+    return [item for item in result if isinstance(item, dict)]
+
+
+def extract_audio_path(items: list[dict]) -> str | None:
+    for item in items:
+        file_ref = item.get("file")
+        if not isinstance(file_ref, str):
+            continue
+        parsed = urlsplit(file_ref)
+        # Only accept the documented relative ACE-Step audio route, never an arbitrary URL.
+        if parsed.scheme or parsed.netloc or parsed.path != "/v1/audio":
+            continue
+        audio_path = parse_qs(parsed.query).get("path", [None])[0]
+        if not audio_path or not audio_path.startswith("/") or "\x00" in audio_path:
+            continue
+        if ".." in PurePosixPath(audio_path).parts:
+            continue
+        return audio_path
+    return None
+
+
+async def ace_download(audio_path: str) -> tuple[bytes, str]:
+    base_url, headers = upstream_config()
     try:
-        async with httpx.AsyncClient(timeout=float(os.getenv("REQUEST_TIMEOUT_SECONDS","30"))) as client:
-            response=await client.post(_ace_url("/query_result"),json={"task_id_list":[task_id]},headers=_ace_headers()); response.raise_for_status(); data=_unwrap(response.json())
-    except httpx.HTTPError as exc: raise HTTPException(status_code=502,detail=f"ACE-Step service unavailable: {exc.__class__.__name__}") from exc
-    if not isinstance(data,list) or not data: raise HTTPException(status_code=502,detail="ACE-Step returned no job result.")
-    item=data[0]; status={0:"running",1:"succeeded",2:"failed"}.get(int(item.get("status",0)),"unknown"); result=item.get("result")
-    if isinstance(result,str):
-        try: result=json.loads(result)
-        except json.JSONDecodeError: result=[]
-    result=result if isinstance(result,list) else []; audio_url=None
-    if status=="succeeded" and result and result[0].get("file"): audio_url=_ace_url(result[0]["file"])
-    return {"task_id":task_id,"status":status,"audio_url":audio_url}
+        async with httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=120.0)) as client:
+            response = await client.get(
+                f"{base_url}/v1/audio",
+                params={"path": audio_path},
+                headers=headers,
+            )
+            response.raise_for_status()
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail="Audio download from ACE-Step timed out.") from exc
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"ACE-Step audio endpoint returned HTTP {exc.response.status_code}.") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail="Unable to download audio from ACE-Step.") from exc
+
+    if len(response.content) > MAX_AUDIO_BYTES:
+        raise HTTPException(status_code=413, detail="Generated audio exceeds the 100 MB download limit.")
+    media_type = response.headers.get("content-type", "application/octet-stream").split(";")[0]
+    if not media_type.startswith("audio/") and media_type != "application/octet-stream":
+        raise HTTPException(status_code=502, detail="ACE-Step returned an unexpected audio content type.")
+    return response.content, media_type
+
+
+@app.get("/api/health")
+async def health():
+    return {
+        "status": "ok",
+        "service": APP_NAME,
+        "generation_configured": bool(os.getenv("ACESTEP_BASE_URL") and os.getenv("APP_ACCESS_TOKEN")),
+    }
+
+
+@app.post("/api/generate", dependencies=[Depends(require_app_token)])
+async def generate(request: GenerateRequest):
+    payload = {
+        "prompt": request.prompt,
+        "lyrics": request.lyrics,
+        "audio_duration": request.duration,
+        "audio_format": request.audio_format,
+        "vocal_language": request.vocal_language,
+        "thinking": request.thinking,
+        "batch_size": 1,
+    }
+    result = await ace_request("POST", "/release_task", json=payload)
+    data = result.get("data", result) if isinstance(result, dict) else {}
+    task_id = data.get("task_id") if isinstance(data, dict) else None
+    if not task_id:
+        raise HTTPException(status_code=502, detail="ACE-Step did not return a task identifier.")
+    return {"task_id": task_id, "status": "queued"}
+
+
+@app.get("/api/tasks/{task_id}", dependencies=[Depends(require_app_token)])
+async def task_status(task_id: str):
+    validate_task_id(task_id)
+    result = await ace_request("POST", "/query_result", json={"task_id_list": [task_id]})
+    data = result.get("data", result) if isinstance(result, dict) else {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    if not isinstance(data, dict):
+        raise HTTPException(status_code=502, detail="Unexpected ACE-Step task response.")
+
+    items = task_result_data(data.get("result"))
+    audio_available = bool(extract_audio_path(items))
+    return {
+        "task_id": task_id,
+        "status": data.get("status", 0),
+        "result": items,
+        "audio_url": f"/api/tasks/{task_id}/audio" if audio_available else None,
+    }
+
+
+@app.get("/api/tasks/{task_id}/audio", dependencies=[Depends(require_app_token)])
+async def download_task_audio(task_id: str):
+    validate_task_id(task_id)
+    result = await ace_request("POST", "/query_result", json={"task_id_list": [task_id]})
+    data = result.get("data", result) if isinstance(result, dict) else {}
+    if isinstance(data, list):
+        data = data[0] if data else {}
+    if not isinstance(data, dict) or data.get("status") != 1:
+        raise HTTPException(status_code=409, detail="Audio is not ready yet.")
+    audio_path = extract_audio_path(task_result_data(data.get("result")))
+    if not audio_path:
+        raise HTTPException(status_code=404, detail="No downloadable audio file was returned for this task.")
+
+    content, media_type = await ace_download(audio_path)
+    suffix = PurePosixPath(audio_path).suffix.lower()
+    if suffix not in {".mp3", ".wav", ".flac", ".opus", ".aac"}:
+        suffix = ".audio"
+    return Response(
+        content=content,
+        media_type=media_type,
+        headers={"Content-Disposition": f'attachment; filename="djibouti-music-{task_id}{suffix}"'},
+    )
