@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 const API = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -12,6 +12,7 @@ export default function App() {
   const [task, setTask] = useState(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [audioBlobUrl, setAudioBlobUrl] = useState("");
 
   async function generate(event) {
     event.preventDefault();
@@ -53,7 +54,42 @@ export default function App() {
     }
   }
 
-  const audioSrc = task?.audio_url ? `${API}${task.audio_url}` : "";
+  useEffect(() => {
+    if (!task?.audio_url || !token) {
+      setAudioBlobUrl("");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let objectUrl;
+
+    setAudioBlobUrl("");
+    fetch(`${API}${task.audio_url}`, {
+      headers: { "X-App-Token": token },
+      signal: controller.signal,
+    })
+      .then(async response => {
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.detail || "Impossible de récupérer le fichier audio.");
+        }
+        return response.blob();
+      })
+      .then(blob => {
+        objectUrl = URL.createObjectURL(blob);
+        setAudioBlobUrl(objectUrl);
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setMessage(error.message);
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [task?.audio_url, token]);
+
+  const audioSrc = audioBlobUrl;
 
   return (
     <main className="shell">
@@ -85,7 +121,7 @@ export default function App() {
           </label>
           <label>Langue
             <select value={language} onChange={e => setLanguage(e.target.value)}>
-              <option value="so">Somali</option><option value="ar">Arabe</option><option value="fr">Français</option><option value="en">Anglais</option><option value="am">Amharique</option>
+              <option value="so">Somali</option><option value="aa">Afar</option><option value="ar">Arabe</option><option value="fr">Français</option><option value="en">Anglais</option><option value="am">Amharique</option>
             </select>
           </label>
           <label>Format
@@ -102,9 +138,13 @@ export default function App() {
         </div>}
         {task?.audio_url && <section className="audio-result" aria-label="Résultat audio">
           <h3>Ta création musicale</h3>
-          <audio controls preload="none" src={audioSrc}>Ton navigateur ne prend pas en charge la lecture audio.</audio>
-          <a className="download" href={audioSrc} download>↓ Télécharger le fichier audio</a>
-          <small>Le téléchargement passe par le backend sécurisé de l’application.</small>
+          {audioSrc ? (
+            <>
+              <audio controls preload="metadata" src={audioSrc}>Ton navigateur ne prend pas en charge la lecture audio.</audio>
+              <a className="download" href={audioSrc} download={`djibouti-music-${task.id}`}>↓ Télécharger le fichier audio</a>
+            </>
+          ) : <p className="message">Chargement du fichier audio…</p>}
+          <small>Le fichier est récupéré avec le jeton d’accès, puis lu depuis le navigateur.</small>
         </section>}
         {task?.result?.length > 0 && <details className="metadata">
           <summary>Détails de la génération</summary>
