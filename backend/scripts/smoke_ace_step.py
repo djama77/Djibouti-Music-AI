@@ -114,7 +114,7 @@ def main() -> int:
         )
         audio_response.raise_for_status()
         content_type = audio_response.headers.get("content-type", "").split(";")[0]
-        if not content_type.startswith("audio/") or not audio_response.content:
+        if (not content_type.startswith("audio/") and content_type != "application/octet-stream") or not audio_response.content:
             raise RuntimeError("ACE-Step did not return a non-empty audio response.")
         if len(audio_response.content) > 100 * 1024 * 1024:
             raise RuntimeError("Generated audio exceeds the application's 100 MB limit.")
