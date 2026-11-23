@@ -45,7 +45,7 @@ export default function App() {
       });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || "Impossible de lire le statut.");
-      setTask(data);
+      setTask({ ...data, id: task.id });
       setMessage(data.status === 1 ? (data.audio_url ? "Ta création est prête. Tu peux l’écouter ou la télécharger." : "Génération terminée, mais aucun fichier audio n’a été fourni.") : data.status === 2 ? "La génération a échoué. Réessaie avec une description différente." : "Création en cours…");
     } catch (error) {
       setMessage(error.message);
