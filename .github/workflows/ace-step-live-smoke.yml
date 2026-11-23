@@ -1,0 +1,36 @@
+name: ACE-Step live GPU smoke test
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live-generation:
+    name: Live generation (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [so, aa]
+    env:
+      ACESTEP_BASE_URL: ${{ secrets.ACESTEP_BASE_URL }}
+      ACESTEP_API_KEY: ${{ secrets.ACESTEP_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/ace-step-engine-validation
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install HTTP client
+        run: python -m pip install "httpx>=0.27,<1"
+      - name: Verify GPU endpoint configuration
+        run: |
+          if [ -z "$ACESTEP_BASE_URL" ]; then
+            echo "::error::Add ACESTEP_BASE_URL in GitHub repository Actions secrets."
+            exit 2
+          fi
+      - name: Generate and download a short audio sample
+        run: python backend/scripts/smoke_ace_step.py --language ${{ matrix.language }} --duration 10 --timeout 900
