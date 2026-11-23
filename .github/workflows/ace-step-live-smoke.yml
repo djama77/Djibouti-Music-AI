@@ -19,8 +19,6 @@ jobs:
       ACESTEP_API_KEY: ${{ secrets.ACESTEP_API_KEY }}
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: fix/ace-step-engine-validation
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
