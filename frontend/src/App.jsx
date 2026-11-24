@@ -1,6 +1,21 @@
 import { useEffect, useState } from "react";
 
-const API = import.meta.env.VITE_API_BASE_URL || "";
+const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\\/+$/, "");
+
+async function apiRequest(path, options = {}) {
+  if (!API) {
+    throw new Error("Le backend musical n’est pas encore relié à ce site. L’administrateur doit configurer VITE_API_BASE_URL dans les variables Vercel.");
+  }
+  const response = await fetch(`${API}${path}`, options);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.detail || `Le serveur API a répondu avec le code HTTP ${response.status}.`);
+  }
+  if (!data || typeof data !== "object") {
+    throw new Error("Le serveur API a renvoyé une réponse invalide.");
+  }
+  return data;
+}
 
 export default function App() {
   const [prompt, setPrompt] = useState("");
@@ -20,13 +35,11 @@ export default function App() {
     setMessage("");
     setTask(null);
     try {
-      const response = await fetch(`${API}/api/generate`, {
+      const data = await apiRequest("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-App-Token": token },
         body: JSON.stringify({ prompt, lyrics, duration: Number(duration), vocal_language: language, audio_format: format })
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "La demande n'a pas abouti.");
       setTask({ id: data.task_id, status: 0, result: [], audio_url: null });
       setMessage("Demande envoyée. La génération peut prendre plusieurs minutes.");
     } catch (error) {
@@ -40,11 +53,9 @@ export default function App() {
     if (!task?.id) return;
     setBusy(true);
     try {
-      const response = await fetch(`${API}/api/tasks/${encodeURIComponent(task.id)}`, {
+      const data = await apiRequest(`/api/tasks/${encodeURIComponent(task.id)}`, {
         headers: { "X-App-Token": token }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Impossible de lire le statut.");
       setTask({ ...data, id: task.id });
       setMessage(data.status === 1 ? (data.audio_url ? "Ta création est prête. Tu peux l’écouter ou la télécharger." : "Génération terminée, mais aucun fichier audio n’a été fourni.") : data.status === 2 ? "La génération a échoué. Réessaie avec une description différente." : "Création en cours…");
     } catch (error) {
@@ -55,7 +66,7 @@ export default function App() {
   }
 
   useEffect(() => {
-    if (!task?.audio_url || !token) {
+    if (!API || !task?.audio_url || !token) {
       setAudioBlobUrl("");
       return undefined;
     }
