@@ -2,9 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main, "fix/**"]
+    branches: [main, develop, "fix/**"]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
@@ -36,3 +43,5 @@ jobs:
       - run: pytest -q
         env:
           PYTHONPATH: .
+      - name: Check live ACE-Step smoke-test script syntax
+        run: python -m py_compile scripts/smoke_ace_step.py

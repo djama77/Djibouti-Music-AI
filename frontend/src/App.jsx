@@ -1,6 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
-const API = import.meta.env.VITE_API_BASE_URL || "";
+const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
+
+async function apiRequest(path, options = {}) {
+  if (!API) {
+    throw new Error("Le backend musical n’est pas encore relié à ce site. L’administrateur doit configurer VITE_API_BASE_URL dans les variables Vercel.");
+  }
+  const response = await fetch(`${API}${path}`, options);
+  const data = await response.json().catch(() => null);
+  if (!response.ok) {
+    throw new Error(data?.detail || `Le serveur API a répondu avec le code HTTP ${response.status}.`);
+  }
+  if (!data || typeof data !== "object") {
+    throw new Error("Le serveur API a renvoyé une réponse invalide.");
+  }
+  return data;
+}
 
 export default function App() {
   const [prompt, setPrompt] = useState("");
@@ -12,6 +27,7 @@ export default function App() {
   const [task, setTask] = useState(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
+  const [audioBlobUrl, setAudioBlobUrl] = useState("");
 
   async function generate(event) {
     event.preventDefault();
@@ -19,13 +35,11 @@ export default function App() {
     setMessage("");
     setTask(null);
     try {
-      const response = await fetch(`${API}/api/generate`, {
+      const data = await apiRequest("/api/generate", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-App-Token": token },
         body: JSON.stringify({ prompt, lyrics, duration: Number(duration), vocal_language: language, audio_format: format })
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "La demande n'a pas abouti.");
       setTask({ id: data.task_id, status: 0, result: [], audio_url: null });
       setMessage("Demande envoyée. La génération peut prendre plusieurs minutes.");
     } catch (error) {
@@ -39,12 +53,10 @@ export default function App() {
     if (!task?.id) return;
     setBusy(true);
     try {
-      const response = await fetch(`${API}/api/tasks/${encodeURIComponent(task.id)}`, {
+      const data = await apiRequest(`/api/tasks/${encodeURIComponent(task.id)}`, {
         headers: { "X-App-Token": token }
       });
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.detail || "Impossible de lire le statut.");
-      setTask(data);
+      setTask({ ...data, id: task.id });
       setMessage(data.status === 1 ? (data.audio_url ? "Ta création est prête. Tu peux l’écouter ou la télécharger." : "Génération terminée, mais aucun fichier audio n’a été fourni.") : data.status === 2 ? "La génération a échoué. Réessaie avec une description différente." : "Création en cours…");
     } catch (error) {
       setMessage(error.message);
@@ -53,7 +65,42 @@ export default function App() {
     }
   }
 
-  const audioSrc = task?.audio_url ? `${API}${task.audio_url}` : "";
+  useEffect(() => {
+    if (!API || !task?.audio_url || !token) {
+      setAudioBlobUrl("");
+      return undefined;
+    }
+
+    const controller = new AbortController();
+    let objectUrl;
+
+    setAudioBlobUrl("");
+    fetch(`${API}${task.audio_url}`, {
+      headers: { "X-App-Token": token },
+      signal: controller.signal,
+    })
+      .then(async response => {
+        if (!response.ok) {
+          const data = await response.json().catch(() => ({}));
+          throw new Error(data.detail || "Impossible de récupérer le fichier audio.");
+        }
+        return response.blob();
+      })
+      .then(blob => {
+        objectUrl = URL.createObjectURL(blob);
+        setAudioBlobUrl(objectUrl);
+      })
+      .catch(error => {
+        if (!controller.signal.aborted) setMessage(error.message);
+      });
+
+    return () => {
+      controller.abort();
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [task?.audio_url, token]);
+
+  const audioSrc = audioBlobUrl;
 
   return (
     <main className="shell">
@@ -85,7 +132,7 @@ export default function App() {
           </label>
           <label>Langue
             <select value={language} onChange={e => setLanguage(e.target.value)}>
-              <option value="so">Somali</option><option value="ar">Arabe</option><option value="fr">Français</option><option value="en">Anglais</option><option value="am">Amharique</option>
+              <option value="so">Somali</option><option value="aa">Afar</option><option value="ar">Arabe</option><option value="fr">Français</option><option value="en">Anglais</option><option value="am">Amharique</option>
             </select>
           </label>
           <label>Format
@@ -102,9 +149,13 @@ export default function App() {
         </div>}
         {task?.audio_url && <section className="audio-result" aria-label="Résultat audio">
           <h3>Ta création musicale</h3>
-          <audio controls preload="none" src={audioSrc}>Ton navigateur ne prend pas en charge la lecture audio.</audio>
-          <a className="download" href={audioSrc} download>↓ Télécharger le fichier audio</a>
-          <small>Le téléchargement passe par le backend sécurisé de l’application.</small>
+          {audioSrc ? (
+            <>
+              <audio controls preload="metadata" src={audioSrc}>Ton navigateur ne prend pas en charge la lecture audio.</audio>
+              <a className="download" href={audioSrc} download={`djibouti-music-${task.id}`}>↓ Télécharger le fichier audio</a>
+            </>
+          ) : <p className="message">Chargement du fichier audio…</p>}
+          <small>Le fichier est récupéré avec le jeton d’accès, puis lu depuis le navigateur.</small>
         </section>}
         {task?.result?.length > 0 && <details className="metadata">
           <summary>Détails de la génération</summary>

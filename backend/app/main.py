@@ -69,7 +69,9 @@ async def ace_request(method: str, path: str, **kwargs):
         raise HTTPException(status_code=502, detail=f"ACE-Step service returned HTTP {exc.response.status_code}.") from exc
     except (httpx.HTTPError, ValueError) as exc:
         raise HTTPException(status_code=502, detail="Unable to communicate with ACE-Step service.") from exc
-    if isinstance(payload, dict) and payload.get("error"):
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=502, detail="ACE-Step returned an unexpected response.")
+    if payload.get("error") or payload.get("code", 200) not in (0, 200):
         raise HTTPException(status_code=502, detail="ACE-Step rejected the request.")
     return payload
 

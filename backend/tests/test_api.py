@@ -108,3 +108,100 @@ def test_audio_download_returns_file(monkeypatch):
     assert response.content == b"fake-mp3-content"
     assert response.headers["content-type"] == "audio/mpeg"
     assert "djibouti-music-task-123.mp3" in response.headers["content-disposition"]
+
+
+
+def test_generation_sends_documented_ace_step_parameters(monkeypatch):
+    monkeypatch.setenv("APP_ACCESS_TOKEN", "test-secret")
+    captured = {}
+
+    async def fake_ace_request(method, path, **kwargs):
+        captured.update(kwargs["json"])
+        return {"data": {"task_id": "task-456"}, "code": 200, "error": None}
+
+    monkeypatch.setattr("app.main.ace_request", fake_ace_request)
+    response = client.post(
+        "/api/generate",
+        headers={"X-App-Token": "test-secret"},
+        json={
+            "prompt": "Traditional Somali strings and percussion",
+            "lyrics": "Sample lyrics",
+            "duration": 60,
+            "audio_format": "mp3",
+            "vocal_language": "so",
+        },
+    )
+
+    assert response.status_code == 200
+    assert captured == {
+        "prompt": "Traditional Somali strings and percussion",
+        "lyrics": "Sample lyrics",
+        "audio_duration": 60,
+        "audio_format": "mp3",
+        "vocal_language": "so",
+        "thinking": False,
+        "batch_size": 1,
+    }
+
+
+def test_ace_step_error_envelope_is_rejected(monkeypatch):
+    import asyncio
+    import httpx
+    from app.main import ace_request
+
+    class FakeResponse:
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {"data": {"task_id": "should-not-be-accepted"}, "code": 500, "error": None}
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def request(self, *args, **kwargs):
+            return FakeResponse()
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return FakeClient()
+
+        async def __aexit__(self, *args):
+            return None
+
+    monkeypatch.setenv("ACESTEP_BASE_URL", "https://ace-step.example")
+    monkeypatch.setattr(httpx, "AsyncClient", FakeAsyncClient)
+
+    try:
+        asyncio.run(ace_request("POST", "/release_task", json={"prompt": "test"}))
+    except Exception as exc:
+        assert getattr(exc, "status_code", None) == 502
+    else:
+        raise AssertionError("ACE-Step error envelope must not be treated as success")
+
+
+def test_audio_download_rejects_missing_token(monkeypatch):
+    monkeypatch.setenv("APP_ACCESS_TOKEN", "test-secret")
+    response = client.get("/api/tasks/task-123/audio")
+    assert response.status_code == 401
+
+
+def test_extract_audio_path_rejects_traversal_and_external_hosts():
+    from app.main import extract_audio_path
+
+    assert extract_audio_path([{"file": "/v1/audio?path=%2Ftmp%2F..%2Fsecret.mp3"}]) is None
+    assert extract_audio_path([{"file": "//evil.example/v1/audio?path=%2Ftmp%2Fa.mp3"}]) is None
+    assert extract_audio_path([{"file": "https://evil.example/v1/audio?path=%2Ftmp%2Fa.mp3"}]) is None
+
+
+def test_extract_audio_path_accepts_expected_relative_audio_route():
+    from app.main import extract_audio_path
+
+    assert extract_audio_path([{"file": "/v1/audio?path=%2Ftmp%2Fapi_audio%2Fsong.mp3"}]) == "/tmp/api_audio/song.mp3"
