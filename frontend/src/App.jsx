@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 
-const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\\/+$/, "");
+const API = (import.meta.env.VITE_API_BASE_URL || "").replace(/\/+$/, "");
 
 async function apiRequest(path, options = {}) {
   if (!API) {
