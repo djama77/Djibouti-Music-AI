@@ -2,9 +2,16 @@ name: CI
 
 on:
   push:
-    branches: [main, "fix/**"]
+    branches: [main, develop, "fix/**"]
   pull_request:
-    branches: [main]
+    branches: [main, develop]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   frontend:
