@@ -185,3 +185,23 @@ def test_ace_step_error_envelope_is_rejected(monkeypatch):
         assert getattr(exc, "status_code", None) == 502
     else:
         raise AssertionError("ACE-Step error envelope must not be treated as success")
+
+
+def test_audio_download_rejects_missing_token(monkeypatch):
+    monkeypatch.setenv("APP_ACCESS_TOKEN", "test-secret")
+    response = client.get("/api/tasks/task-123/audio")
+    assert response.status_code == 401
+
+
+def test_extract_audio_path_rejects_traversal_and_external_hosts():
+    from app.main import extract_audio_path
+
+    assert extract_audio_path([{"file": "/v1/audio?path=%2Ftmp%2F..%2Fsecret.mp3"}]) is None
+    assert extract_audio_path([{"file": "//evil.example/v1/audio?path=%2Ftmp%2Fa.mp3"}]) is None
+    assert extract_audio_path([{"file": "https://evil.example/v1/audio?path=%2Ftmp%2Fa.mp3"}]) is None
+
+
+def test_extract_audio_path_accepts_expected_relative_audio_route():
+    from app.main import extract_audio_path
+
+    assert extract_audio_path([{"file": "/v1/audio?path=%2Ftmp%2Fapi_audio%2Fsong.mp3"}]) == "/tmp/api_audio/song.mp3"
